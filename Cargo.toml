@@ -1,0 +1,10 @@
+[package]
+name = "magicband-ctl"
+version = "0.1.0"
+edition = "2024"
+description = "Control MagicBand+ LEDs and haptics over BLE from Linux"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "process"] }
+anyhow = "1"
