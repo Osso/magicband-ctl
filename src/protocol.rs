@@ -96,34 +96,31 @@ pub fn single_color(color: Color, vib: u8) -> Vec<u8> {
     let mut p = MFG_PREFIX.to_vec();
     // timing 0x2E = ~12s on-time, mask 0x0E = all LEDs
     p.extend_from_slice(&[
-        0xE9, 0x05, 0x00, 0x2E, 0x0E,
+        0xE9,
+        0x05,
+        0x00,
+        0x2E,
+        0x0E,
         color_byte_single(color),
         vib_byte(vib),
     ]);
     p
 }
 
-/// E9 09 — 5-color rainbow cycle.
-pub fn rainbow_default(vib: u8) -> Vec<u8> {
-    rainbow(
-        Color::YellowOrange,
-        Color::Red,
-        Color::Green,
-        Color::Blue,
-        Color::Purple,
-        vib,
-    )
-}
-
-pub fn rainbow(c1: Color, c2: Color, c3: Color, c4: Color, c5: Color, vib: u8) -> Vec<u8> {
+/// E9 09 — 5 colors mapped to the 5 LEDs (static, not animated).
+pub fn five_color(c1: Color, c2: Color, c3: Color, c4: Color, c5: Color, vib: u8) -> Vec<u8> {
     let mut p = MFG_PREFIX.to_vec();
     p.extend_from_slice(&[
-        0xE9, 0x09, 0x00, 0x2E, 0x0F,
-        color_byte_multi(c1),
-        color_byte_multi(c2),
-        color_byte_multi(c3),
-        color_byte_multi(c4),
-        color_byte_multi(c5),
+        0xE9,
+        0x09,
+        0x00,
+        0x2E,
+        0x0F,
+        color_byte_multi(c1), // center
+        color_byte_multi(c2), // top-right
+        color_byte_multi(c3), // bottom-right
+        color_byte_multi(c4), // bottom-left
+        color_byte_multi(c5), // top-left
         vib_byte(vib),
     ]);
     p
@@ -133,9 +130,63 @@ pub fn rainbow(c1: Color, c2: Color, c3: Color, c4: Color, c5: Color, vib: u8) -
 pub fn dual_color(inner: Color, outer: Color, vib: u8) -> Vec<u8> {
     let mut p = MFG_PREFIX.to_vec();
     p.extend_from_slice(&[
-        0xE9, 0x06, 0x00, 0x22, 0x0F,
+        0xE9,
+        0x06,
+        0x00,
+        0x22,
+        0x0F,
         color_byte_dual(inner),
         color_byte_dual(outer),
+        vib_byte(vib),
+    ]);
+    p
+}
+
+/// E9 0B — circle animation (pre-programmed rotating pattern).
+pub fn circle(vib: u8) -> Vec<u8> {
+    let mut p = MFG_PREFIX.to_vec();
+    p.extend_from_slice(&[
+        0xE9,
+        0x0B,
+        0x0B,
+        0x0F,
+        0x0F,
+        0x5C,
+        0x5D,
+        0x48,
+        0xA5,
+        0xD1,
+        0x45,
+        0x32,
+        vib_byte(vib),
+    ]);
+    p
+}
+
+/// Crossfade animation between two colors.
+pub fn crossfade(c1: Color, c2: Color, vib: u8) -> Vec<u8> {
+    let mut p = MFG_PREFIX.to_vec();
+    p.extend_from_slice(&[
+        0xE1,
+        0x00,
+        0xE9,
+        0x11,
+        0x00,
+        0x6F,
+        0x0F,
+        0x40 | (c1 as u8 & 0x1F),
+        0x40 | (c2 as u8 & 0x1F),
+        0x58,
+        0xF4,
+        0x48,
+        0x82,
+        0xD1,
+        0x46,
+        0x02,
+        0x08,
+        0xD0,
+        0x65,
+        0x00,
         vib_byte(vib),
     ]);
     p

@@ -1,69 +1,69 @@
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
+use tokio::io::AsyncWriteExt;
 use tokio::time::{Duration, sleep};
 
 /// Broadcast a MagicBand+ manufacturer data packet as a BLE advertisement.
 ///
-/// Uses BlueZ hcitool to set raw advertising data and enable non-connectable
-/// advertising for `duration_secs`, then disables it.
-///
 /// The packet must start with the 0x8301 Disney manufacturer prefix.
-/// Requires: bluez-utils (hcitool), root or bluetooth group.
+/// Uses bluetoothctl to register a non-connectable broadcast advertisement
+/// with fast intervals (~32-48ms) matching Disney park beacons.
+///
+/// Requires: bluez-utils (bluetoothctl), bluetooth group membership.
 pub async fn broadcast(packet: &[u8], duration_secs: u64) -> Result<()> {
+    if packet.len() < 2 || packet[0] != 0x83 || packet[1] != 0x01 {
+        anyhow::bail!("packet must start with Disney manufacturer prefix 0x8301");
+    }
+
     print_packet(packet);
 
-    // Build AD structure: flags + manufacturer specific data
-    let mfg_len = packet.len() as u8 + 1; // +1 for the AD type byte
-    let mut adv_data = Vec::with_capacity(31);
-    adv_data.extend_from_slice(&[0x02, 0x01, 0x06]); // Flags: LE General + BR/EDR Not Supported
-    adv_data.push(mfg_len);
-    adv_data.push(0xFF); // AD type: Manufacturer Specific Data
-    adv_data.extend_from_slice(packet);
-    adv_data.resize(31, 0x00); // Pad to max legacy advertisement length
+    // Company ID 0x0183 (little-endian: 0x83 0x01), payload is the rest
+    let payload = &packet[2..];
+    let payload_hex: Vec<String> = payload.iter().map(|b| format!("0x{b:02x}")).collect();
+    let mfg_arg = format!("0x0183 {}", payload_hex.join(" "));
 
-    let hex: String = adv_data.iter().map(|b| format!("{b:02X}")).collect();
+    let mut child = tokio::process::Command::new("bluetoothctl")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .context("failed to run bluetoothctl — is bluez-utils installed?")?;
 
-    // Set advertising data (OGF=0x08 OCF=0x0008 = LE Set Advertising Data)
-    run_hci(&["cmd", "0x08", "0x0008", &hex]).await?;
+    let mut stdin = child.stdin.take().context("failed to open stdin")?;
 
-    // Set advertising parameters: ADV_NONCONN_IND, fast interval
-    // OGF=0x08 OCF=0x0006 = LE Set Advertising Parameters
-    run_hci(&[
-        "cmd", "0x08", "0x0006",
-        "2000",          // min interval 0x0020 (20ms) little-endian
-        "4000",          // max interval 0x0040 (40ms) little-endian
-        "03",            // ADV_NONCONN_IND (non-connectable undirected)
-        "00",            // own address type: public
-        "00",            // peer address type
-        "000000000000",  // peer address (unused)
-        "07",            // channel map: all three advertising channels
-        "00",            // filter policy: allow any
-    ])
-    .await?;
+    // Wait for bluetoothctl to connect to bluetoothd
+    sleep(Duration::from_millis(500)).await;
 
-    // Enable advertising (OGF=0x08 OCF=0x000A)
-    run_hci(&["cmd", "0x08", "0x000A", "01"]).await?;
+    // Configure advertisement: non-connectable broadcast, fast interval, no name
+    let setup = format!(
+        "menu advertise\n\
+         clear\n\
+         manufacturer {mfg_arg}\n\
+         name off\n\
+         interval 32 48\n\
+         back\n\
+         advertise broadcast\n"
+    );
+    stdin.write_all(setup.as_bytes()).await?;
+    stdin.flush().await?;
+
+    // Wait for bluetoothd to register the advertisement
+    sleep(Duration::from_millis(500)).await;
+
     eprintln!("Broadcasting for {duration_secs}s...");
-
     sleep(Duration::from_secs(duration_secs)).await;
 
-    // Disable advertising
-    run_hci(&["cmd", "0x08", "0x000A", "00"]).await?;
-    eprintln!("Done.");
+    // Stop advertising and exit
+    stdin.write_all(b"advertise off\n").await?;
+    stdin.write_all(b"quit\n").await?;
+    stdin.shutdown().await?;
 
-    Ok(())
-}
-
-async fn run_hci(args: &[&str]) -> Result<()> {
-    let output = tokio::process::Command::new("hcitool")
-        .args(args)
-        .output()
-        .await
-        .context("failed to run hcitool — is bluez-utils installed?")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("hcitool failed: {stderr}");
+    let output = child.wait_with_output().await?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if stdout.contains("Failed") {
+        anyhow::bail!("bluetoothctl error: {stdout}");
     }
+
+    eprintln!("Done.");
     Ok(())
 }
 
