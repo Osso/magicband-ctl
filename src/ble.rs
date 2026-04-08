@@ -2,24 +2,29 @@ use anyhow::{Context, Result};
 use tokio::io::AsyncWriteExt;
 use tokio::time::{Duration, sleep};
 
+/// Disney BLE manufacturer ID (little-endian: bytes 0x83 0x01 in packets).
+const DISNEY_MANUFACTURER_ID: u16 = 0x0183;
+
 /// Broadcast a MagicBand+ manufacturer data packet as a BLE advertisement.
 ///
-/// The packet must start with the 0x8301 Disney manufacturer prefix.
+/// The packet must start with the Disney manufacturer prefix (0x83 0x01).
 /// Uses bluetoothctl to register a non-connectable broadcast advertisement
 /// with fast intervals (~32-48ms) matching Disney park beacons.
 ///
 /// Requires: bluez-utils (bluetoothctl), bluetooth group membership.
 pub async fn broadcast(packet: &[u8], duration_secs: u64) -> Result<()> {
-    if packet.len() < 2 || packet[0] != 0x83 || packet[1] != 0x01 {
-        anyhow::bail!("packet must start with Disney manufacturer prefix 0x8301");
+    let prefix_hi = (DISNEY_MANUFACTURER_ID >> 8) as u8;
+    let prefix_lo = (DISNEY_MANUFACTURER_ID & 0xFF) as u8;
+    if packet.len() < 2 || packet[0] != prefix_hi || packet[1] != prefix_lo {
+        anyhow::bail!("packet must start with Disney manufacturer prefix 0x{DISNEY_MANUFACTURER_ID:04x}");
     }
 
     print_packet(packet);
 
-    // Company ID 0x0183 (little-endian: 0x83 0x01), payload is the rest
+    // Company ID (little-endian in packet), payload is the rest
     let payload = &packet[2..];
     let payload_hex: Vec<String> = payload.iter().map(|b| format!("0x{b:02x}")).collect();
-    let mfg_arg = format!("0x0183 {}", payload_hex.join(" "));
+    let mfg_arg = format!("0x{DISNEY_MANUFACTURER_ID:04x} {}", payload_hex.join(" "));
 
     let mut child = tokio::process::Command::new("bluetoothctl")
         .stdin(std::process::Stdio::piped())
