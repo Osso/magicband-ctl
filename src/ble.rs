@@ -16,7 +16,9 @@ pub async fn broadcast(packet: &[u8], duration_secs: u64) -> Result<()> {
     let prefix_hi = (DISNEY_MANUFACTURER_ID >> 8) as u8;
     let prefix_lo = (DISNEY_MANUFACTURER_ID & 0xFF) as u8;
     if packet.len() < 2 || packet[0] != prefix_hi || packet[1] != prefix_lo {
-        anyhow::bail!("packet must start with Disney manufacturer prefix 0x{DISNEY_MANUFACTURER_ID:04x}");
+        anyhow::bail!(
+            "packet must start with Disney manufacturer prefix 0x{DISNEY_MANUFACTURER_ID:04x}"
+        );
     }
 
     print_packet(packet);
