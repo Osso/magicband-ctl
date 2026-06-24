@@ -61,6 +61,7 @@ pub fn parse_color(name: &str) -> Result<Color> {
     );
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub fn print_colors() {
     println!("Available colors:");
     for (color, label) in COLORS {
@@ -89,6 +90,70 @@ pub fn ping() -> Vec<u8> {
     let mut p = MFG_PREFIX.to_vec();
     p.extend_from_slice(&[0xCC, 0x03, 0x00, 0x00, 0x00]);
     p
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PREFIX: [u8; 2] = [0x83, 0x01];
+
+    #[test]
+    fn parse_color_is_case_insensitive_and_reports_unknowns() {
+        assert_eq!(parse_color("red").expect("red") as u8, Color::Red as u8);
+        assert_eq!(
+            parse_color("Bright-Purple").expect("bright purple") as u8,
+            Color::BrightPurple as u8
+        );
+        assert!(parse_color("not-a-color").is_err());
+    }
+
+    #[test]
+    fn packet_builders_start_with_magicband_prefix() {
+        for packet in [
+            ping(),
+            single_color(Color::Red, 1),
+            dual_color(Color::Red, Color::Blue, 2),
+            five_color(
+                Color::Red,
+                Color::Blue,
+                Color::Green,
+                Color::White,
+                Color::Off,
+                3,
+            ),
+            circle(4),
+            crossfade(Color::Red, Color::Blue, 5),
+        ] {
+            assert_eq!(&packet[..2], &PREFIX);
+        }
+    }
+
+    #[test]
+    fn single_color_encodes_color_and_vibration_nibble() {
+        let packet = single_color(Color::Red, 0x2f);
+
+        assert_eq!(
+            packet,
+            vec![0x83, 0x01, 0xe9, 0x05, 0x00, 0x2e, 0x0e, 0xf5, 0xbf]
+        );
+    }
+
+    #[test]
+    fn dual_and_five_color_encode_expected_opcodes() {
+        let dual = dual_color(Color::Red, Color::Blue, 1);
+        assert_eq!(&dual[2..5], &[0xe9, 0x06, 0x00]);
+
+        let five = five_color(
+            Color::Red,
+            Color::Blue,
+            Color::Green,
+            Color::White,
+            Color::Off,
+            2,
+        );
+        assert_eq!(&five[2..7], &[0xe9, 0x09, 0x00, 0x2e, 0x0f]);
+    }
 }
 
 /// E9 05 — single color from palette.

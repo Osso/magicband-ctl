@@ -1,3 +1,5 @@
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
@@ -87,6 +89,7 @@ enum Command {
 }
 
 #[tokio::main]
+#[cfg_attr(coverage_nightly, coverage(off))]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -95,16 +98,22 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let packet = match &cli.command {
+    let packet = build_packet(&cli.command)?;
+
+    ble::broadcast(&packet, cli.duration).await
+}
+
+fn build_packet(command: &Command) -> Result<Vec<u8>> {
+    let packet = match command {
         Command::Ping => protocol::ping(),
         Command::Color { name, vib } => {
             let color = protocol::parse_color(name)?;
             protocol::single_color(color, *vib)
         }
         Command::Dual { inner, outer, vib } => {
-            let c1 = protocol::parse_color(inner)?;
-            let c2 = protocol::parse_color(outer)?;
-            protocol::dual_color(c1, c2, *vib)
+            let inner_color = protocol::parse_color(inner)?;
+            let outer_color = protocol::parse_color(outer)?;
+            protocol::dual_color(inner_color, outer_color, *vib)
         }
         Command::FiveColor {
             center,
@@ -113,20 +122,115 @@ async fn main() -> Result<()> {
             bottom_left,
             top_left,
             vib,
-        } => protocol::five_color(
-            protocol::parse_color(center)?,
-            protocol::parse_color(top_right)?,
-            protocol::parse_color(bottom_right)?,
-            protocol::parse_color(bottom_left)?,
-            protocol::parse_color(top_left)?,
-            *vib,
-        ),
+        } => build_five_color_packet(center, top_right, bottom_right, bottom_left, top_left, *vib)?,
         Command::Circle { vib } => protocol::circle(*vib),
         Command::Crossfade { c1, c2, vib } => {
-            protocol::crossfade(protocol::parse_color(c1)?, protocol::parse_color(c2)?, *vib)
+            let first = protocol::parse_color(c1)?;
+            let second = protocol::parse_color(c2)?;
+            protocol::crossfade(first, second, *vib)
         }
         Command::Colors => unreachable!(),
     };
+    Ok(packet)
+}
 
-    ble::broadcast(&packet, cli.duration).await
+fn build_five_color_packet(
+    center: &str,
+    top_right: &str,
+    bottom_right: &str,
+    bottom_left: &str,
+    top_left: &str,
+    vib: u8,
+) -> Result<Vec<u8>> {
+    Ok(protocol::five_color(
+        protocol::parse_color(center)?,
+        protocol::parse_color(top_right)?,
+        protocol::parse_color(bottom_right)?,
+        protocol::parse_color(bottom_left)?,
+        protocol::parse_color(top_left)?,
+        vib,
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn build_packet_maps_command_variants_to_protocol_packets() {
+        assert_eq!(
+            build_packet(&Command::Ping).expect("ping"),
+            protocol::ping()
+        );
+        assert_eq!(
+            build_packet(&Command::Color {
+                name: "red".to_string(),
+                vib: 1,
+            })
+            .expect("color"),
+            protocol::single_color(protocol::Color::Red, 1)
+        );
+        assert_eq!(
+            build_packet(&Command::Dual {
+                inner: "red".to_string(),
+                outer: "blue".to_string(),
+                vib: 2,
+            })
+            .expect("dual"),
+            protocol::dual_color(protocol::Color::Red, protocol::Color::Blue, 2)
+        );
+        assert_eq!(
+            build_packet(&Command::Circle { vib: 3 }).expect("circle"),
+            protocol::circle(3)
+        );
+    }
+
+    #[test]
+    fn build_packet_handles_five_color_and_crossfade() {
+        assert_eq!(
+            build_packet(&Command::FiveColor {
+                center: "red".to_string(),
+                top_right: "blue".to_string(),
+                bottom_right: "green".to_string(),
+                bottom_left: "white".to_string(),
+                top_left: "off".to_string(),
+                vib: 4,
+            })
+            .expect("five color"),
+            protocol::five_color(
+                protocol::Color::Red,
+                protocol::Color::Blue,
+                protocol::Color::Green,
+                protocol::Color::White,
+                protocol::Color::Off,
+                4,
+            )
+        );
+        assert_eq!(
+            build_packet(&Command::Crossfade {
+                c1: "red".to_string(),
+                c2: "blue".to_string(),
+                vib: 5,
+            })
+            .expect("crossfade"),
+            protocol::crossfade(protocol::Color::Red, protocol::Color::Blue, 5)
+        );
+    }
+
+    #[test]
+    fn build_packet_reports_unknown_color() {
+        assert!(
+            build_packet(&Command::Color {
+                name: "not-a-color".to_string(),
+                vib: 0,
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn clap_definition_is_valid() {
+        Cli::command().debug_assert();
+    }
 }
